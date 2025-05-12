@@ -574,13 +574,13 @@ def main():
     #in_dir = "/home/john/Documents/doppler"
 
     #fname = r"20250504_202105_SerialLog.csv"
-    fname = r"20250505_212916_SerialLog.csv"
+    ##fname = r"20250505_212916_SerialLog.csv"
     #fname = r"20250506_220329_SerialLog.csv"
     #fname = r"20250507_222129_SerialLog.csv" # 9 total
     #fname = r"20250508_000003_SerialLog.csv"
     #fname = r"20250509_000003_SerialLog.csv"
     #fname = r"20250510_000003_SerialLog.csv"
-    #fname = r"20250511_000003_SerialLog.csv"
+    fname = r"20250511_000003_SerialLog.csv"
 
     # Configure which plots to show
     plot_config = PlotConfig(        
@@ -606,8 +606,9 @@ def main():
     epoch = dfRaw['epoch'].to_numpy()  # get just the seconds timestamp
 
     dur = (epoch[-1] - epoch[0])/(60*60.0) # duration in hours
-    hr_string = ("%s   %.1f hours " % (fname,dur))
-    print(hr_string)
+    hr_string = ("%.1f hours " % (dur))
+    hr1_string = ("%s   %.1f hours " % (fname,dur))
+    print(hr1_string)
 
     speed_min_threshold = 20.0 # threshold in km/h for interesting event
     duration_min_threshold = 2.5 # duration in seconds
