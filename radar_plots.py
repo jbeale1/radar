@@ -87,7 +87,7 @@ class RadarPlotter:
         # plt.tight_layout(pad=3.0)
         plt.tight_layout(
             h_pad=6.5,    # Increase vertical spacing between plots
-            w_pad=1.0,    # Horizontal spacing between plots
+            w_pad=2.0,    # Horizontal spacing between plots
             rect=[0.05, 0.05, 0.95, 0.95]  # Leave margins around the figure
         )
         
@@ -209,22 +209,22 @@ class RadarPlotter:
     def plot_speed_histogram(self, dfg1, firstDate, lastDate, hr_string):
         """histogram plot of vehicle speeds."""        
         ax = self.axes['hist']
-        data_so_far = []
+        pk_speeds = []
         bin_count = 12
         bin_range = (20, 80)
         bin_edges = np.linspace(bin_range[0], bin_range[1], bin_count + 1)
         bin_width = bin_edges[1] - bin_edges[0]
         bin_stats = []  # Store bin stats for final summary
 
-        data_so_far = dfg1['max'].tolist()
+        pk_speeds = dfg1['max'].tolist()
         index = len(dfg1)-1
 
-        mu = np.mean(data_so_far)
-        sigma = np.std(data_so_far)
-        N = len(data_so_far)
+        mu = np.mean(pk_speeds)
+        sigma = np.std(pk_speeds)
+        N = len(pk_speeds)
 
         # Histogram with counts
-        counts, bins, patches = ax.hist(data_so_far,
+        counts, bins, patches = ax.hist(pk_speeds,
                                         bins=bin_edges,
                                         edgecolor='black',
                                         color='skyblue')
