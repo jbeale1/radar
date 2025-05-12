@@ -1,2 +1,8 @@
 # radar
-analyzing speeds of objects with a simple radar device
+This software analyzes speed reports from simple radar device. I am using the HLK-LD2415H doppler radar detector. This is a board or module of the kind which is used in roadside speed signs. In that use, it would be connected to a display that shows your speed in miles per hour or km/h. The board reports detected vehicle speeds as simple text messages at 9600 baud. It claims to be accurate to +/- 1 km/h which is 0.62 mph, assuming the radar is exactly in line with the travel direction of the target. I have not tested the accuracy, but the data looks plausible to me. I find the useful range can exceed 100 meters for a car, and 60 meters for a person. You can select if you want to measure cars going only in one direction (eg. toward, or away from the detector) or in both directions.
+
+The device reports new readings at a configurable speed up to 22 reports per second. This software can mostly tell slow-moving vehicles and pedestrians apart, because the jitter between adjacent readings is generally larger for a person. This is from arms and legs that move at different speeds from the body, unlike a car where it mostly all moves at the same speed. There is more overlap between what the returns from rain and from people walking look like. For that reason, when it rains the "person" and "rain" event numbers are not reliably separated.
+
+The histogram and probability plots give some indication of how close to a normal (eg. gaussian-curve shape) distribution the given dataset is.  Most days on my street it is pretty close to normal, except there are a few more points on the high side than would be expected, if all speeds were drawn from the same distribution.
+
+![Report1](https://github.com/jbeale1/radar/blob/main/Stats-250511a.png)
