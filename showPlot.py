@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import matplotlib.dates as mdates
 
@@ -48,6 +48,9 @@ def doPlot(filename):
     # Filter out suspicious constant groups
     speeds = filter_constant_groups(speeds, threshold=10.0, max_group_size=8)
     
+    # Convert km/h to mph
+    speeds = speeds * 0.621371
+    
     # Determine absolute speed values
     abs_speeds = np.abs(speeds)
 
@@ -66,12 +69,12 @@ def doPlot(filename):
     # Plot
     plt.figure(figsize=(12, 6))
     plt.scatter([dt for i, dt in enumerate(datetimes) if not is_negative[i]],
-            abs_speeds[~is_negative], color='green', label='Westbound', s=10)
+            abs_speeds[~is_negative], color='#4088D0', label='Westbound', s=10)
     plt.scatter([dt for i, dt in enumerate(datetimes) if is_negative[i]],
-            abs_speeds[is_negative], color='grey', label='Eastbound', s=10)
+            abs_speeds[is_negative], color='#60A040', label='Eastbound', s=10)
 
-    plt.xlabel('Local Time (PDT)')
-    plt.ylabel('Speed (km/h)')
+    plt.xlabel('Local Time (PDT)', fontsize=12)
+    plt.ylabel('Speed (mph)', fontsize = 12)  # Changed from km/h to mph
     plt.title('Vehicle Speed vs Time')
     plt.legend()
     plt.grid(True)
@@ -79,16 +82,49 @@ def doPlot(filename):
 
     ax = plt.gca()
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=local_tz))    
-    ax.format_xdata = format_time_with_tenths
-    ax.tick_params(axis='x', labelrotation=0)
-
-    plt.text(0.02, 1.02, annotation_text,
+    ax.format_xdata = format_time_with_tenths    
+    
+    # Get actual data time range instead of plot limits
+    start_dt = min(datetimes)
+    end_dt = max(datetimes)
+    
+    # Find first even hour before or at start time
+    start_hour = start_dt.hour
+    if start_hour % 2:  # if odd
+        start_hour -= 1  # round down to previous even hour
+    
+    # Create ticks for all even hours in the range
+    tick_times = []
+    current_dt = start_dt.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    while current_dt <= end_dt:
+        tick_times.append(current_dt)
+        next_hour = (current_dt.hour + 2) % 24  # wrap around at midnight
+        if next_hour < current_dt.hour:  # we wrapped past midnight
+            current_dt = current_dt.replace(hour=next_hour, day=current_dt.day + 1)
+        else:
+            current_dt = current_dt.replace(hour=next_hour)
+    
+    if tick_times:  # if we found any even hours
+        tick_nums = [mdates.date2num(dt) for dt in tick_times]
+        ax.xaxis.set_ticks(tick_nums)
+    
+    ax.tick_params(axis='x', labelrotation=0, labelsize=12)
+    ax.tick_params(axis='y', labelsize=12)
+    
+    # Make y-axis numbers bold
+    for label in ax.yaxis.get_ticklabels():
+        label.set_fontweight('bold')
+    
+    # Add annotation text above plot area
+    plt.text(0.02, 1.005, annotation_text,  # Increased y position from 1.02 to 1.05
          transform=plt.gca().transAxes,
-         verticalalignment='top',
+         verticalalignment='bottom',  # Changed from 'top' to 'bottom'
          horizontalalignment='left',
-         fontsize=10,
-         bbox=dict(facecolor='white', edgecolor='none', boxstyle='round,pad=0.1'))
+         fontsize=10
+         )
 
+    # Adjust margins to make room for annotation
+    plt.subplots_adjust(top=0.92)  # Add this line before tight_layout
     plt.tight_layout()
     plt.show()
 
