@@ -1,3 +1,5 @@
+#!/home/john/anaconda3/envs/cv/bin/python
+
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
@@ -81,32 +83,56 @@ def doPlot(filename):
 
 
     ax = plt.gca()
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=local_tz))    
-    ax.format_xdata = format_time_with_tenths    
+
+        # Create locator and formatter for dynamic tick spacing
+    locator = mdates.AutoDateLocator(tz=local_tz)
+    formatter = mdates.ConciseDateFormatter(locator, tz=local_tz)
+    
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+    ax.format_xdata = format_time_with_tenths
+
+
+
+    #ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=local_tz))    
+    # ax.format_xdata = format_time_with_tenths    
     
     # Get actual data time range instead of plot limits
     start_dt = min(datetimes)
     end_dt = max(datetimes)
-    
-    # Find first even hour before or at start time
-    start_hour = start_dt.hour
-    if start_hour % 2:  # if odd
-        start_hour -= 1  # round down to previous even hour
-    
-    # Create ticks for all even hours in the range
+    span_hours = (end_dt - start_dt).total_seconds() / 3600
+
+    # Decide tick interval
+    """"
+    if span_hours < 1.5:
+        tick_delta = timedelta(minutes=15)
+        fmt = '%H:%M'
+    elif span_hours < 4:
+        tick_delta = timedelta(minutes=30)
+        fmt = '%H:%M'
+    else:
+        tick_delta = timedelta(hours=2)
+        fmt = '%H:%M'
+
+    # Find first tick before or at start time, aligned to interval
+    tick_minute = (start_dt.minute // tick_delta.seconds//60) * (tick_delta.seconds//60)
+    tick_start = start_dt.replace(minute=0, second=0, microsecond=0)
+    tick_start += timedelta(minutes=tick_minute)
+    while tick_start > start_dt:
+        tick_start -= tick_delta
+
+    # Create ticks
     tick_times = []
-    current_dt = start_dt.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    current_dt = tick_start
     while current_dt <= end_dt:
         tick_times.append(current_dt)
-        next_hour = (current_dt.hour + 2) % 24  # wrap around at midnight
-        if next_hour < current_dt.hour:  # we wrapped past midnight
-            current_dt = current_dt.replace(hour=next_hour, day=current_dt.day + 1)
-        else:
-            current_dt = current_dt.replace(hour=next_hour)
-    
-    if tick_times:  # if we found any even hours
+        current_dt += tick_delta
+
+    if tick_times:
         tick_nums = [mdates.date2num(dt) for dt in tick_times]
         ax.xaxis.set_ticks(tick_nums)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter(fmt, tz=local_tz))
+    """
     
     ax.tick_params(axis='x', labelrotation=0, labelsize=12)
     ax.tick_params(axis='y', labelsize=12)
