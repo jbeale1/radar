@@ -1,4 +1,5 @@
 #!/home/john/anaconda3/envs/cv/bin/python
+# python v3.9.7
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -45,13 +46,11 @@ def doPlot(filename):
 
     # Extract columns
     epochs = data['epoch']
-    speeds = data['kmh']
-    
+    speeds = data['kmh']    
+    speeds = speeds * 0.621371      # Convert km/h to mph
+
     # Filter out suspicious constant groups
-    speeds = filter_constant_groups(speeds, threshold=10.0, max_group_size=8)
-    
-    # Convert km/h to mph
-    speeds = speeds * 0.621371
+    speeds = filter_constant_groups(speeds, threshold=6, max_group_size=8)
     
     # Determine absolute speed values
     abs_speeds = np.abs(speeds)
@@ -81,59 +80,20 @@ def doPlot(filename):
     plt.legend()
     plt.grid(True)
 
-
     ax = plt.gca()
 
         # Create locator and formatter for dynamic tick spacing
     locator = mdates.AutoDateLocator(tz=local_tz)
-    formatter = mdates.ConciseDateFormatter(locator, tz=local_tz)
-    
+    formatter = mdates.ConciseDateFormatter(locator, tz=local_tz)    
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(formatter)
     ax.format_xdata = format_time_with_tenths
-
-
-
-    #ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=local_tz))    
-    # ax.format_xdata = format_time_with_tenths    
     
     # Get actual data time range instead of plot limits
     start_dt = min(datetimes)
     end_dt = max(datetimes)
     span_hours = (end_dt - start_dt).total_seconds() / 3600
 
-    # Decide tick interval
-    """"
-    if span_hours < 1.5:
-        tick_delta = timedelta(minutes=15)
-        fmt = '%H:%M'
-    elif span_hours < 4:
-        tick_delta = timedelta(minutes=30)
-        fmt = '%H:%M'
-    else:
-        tick_delta = timedelta(hours=2)
-        fmt = '%H:%M'
-
-    # Find first tick before or at start time, aligned to interval
-    tick_minute = (start_dt.minute // tick_delta.seconds//60) * (tick_delta.seconds//60)
-    tick_start = start_dt.replace(minute=0, second=0, microsecond=0)
-    tick_start += timedelta(minutes=tick_minute)
-    while tick_start > start_dt:
-        tick_start -= tick_delta
-
-    # Create ticks
-    tick_times = []
-    current_dt = tick_start
-    while current_dt <= end_dt:
-        tick_times.append(current_dt)
-        current_dt += tick_delta
-
-    if tick_times:
-        tick_nums = [mdates.date2num(dt) for dt in tick_times]
-        ax.xaxis.set_ticks(tick_nums)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter(fmt, tz=local_tz))
-    """
-    
     ax.tick_params(axis='x', labelrotation=0, labelsize=12)
     ax.tick_params(axis='y', labelsize=12)
     
@@ -154,6 +114,7 @@ def doPlot(filename):
     plt.tight_layout()
     plt.show()
 
+# ========== Main Function ==========
 if __name__ == "__main__":
     import sys
     if len(sys.argv) != 2:
