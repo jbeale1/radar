@@ -579,7 +579,10 @@ def main():
     #fname = r"20250508_000003_SerialLog.csv"
     #fname = r"20250509_000003_SerialLog.csv"
     #fname = r"20250510_000003_SerialLog.csv"
-    fname = r"20250511_000003_SerialLog.csv"
+    #fname = r"20250511_000003_SerialLog.csv"
+    #fname = r"20250512_083326_SerialLog.csv"
+    #fname = r"20250513_000004_SerialLog.csv"
+    fname = r"20250514_000003_SerialLog.csv"
 
     # Configure which plots to show
     plot_config = PlotConfig(        
