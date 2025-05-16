@@ -1,3 +1,7 @@
+# Process a CSV file containing vehicle speed data. Identify events based on speed thresholds.
+# Report the detected events with their start time, duration, and direction.
+# J.Beale, 2025-05-15
+
 import pandas as pd
 from datetime import datetime, timezone
 import pytz
