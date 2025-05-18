@@ -1,11 +1,15 @@
 #!/home/john/anaconda3/envs/cv/bin/python
 # python v3.9.7
 
+# Display speeds, count pedestrians
+
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import matplotlib.dates as mdates
+from scipy.stats import skew
+from scipy.ndimage import binary_dilation
 
 utc_tz = ZoneInfo("UTC")
 local_tz = ZoneInfo("America/Los_Angeles")  # use local timezone. PST/PDT is automatic by date 
@@ -40,6 +44,70 @@ def filter_constant_groups(speeds, threshold=10.0, max_group_size=8):
         
     return result
 
+def calculate_slow_rate(epochs, speeds, window_size=110, speed_threshold=5):
+    """Calculate rate of slow readings per hour in sliding window.
+    
+    Args:
+        epochs: array of Unix timestamps
+        speeds: array of speeds in mph
+        window_size: number of readings to look back
+        speed_threshold: speed below which to count as 'slow' (mph)
+    
+    Returns:
+        rates: array of hourly rates for each point
+    """
+    rates1 = np.zeros(len(speeds))
+    rates2 = np.zeros(len(speeds))
+    #skewness = rates.copy()
+
+    for i in range(window_size, len(speeds), 10):
+        window_start = i - window_size
+        window_speeds = speeds[window_start:i]
+        window_epochs = epochs[window_start:i]
+        
+        # Count slow readings in window (excluding zeros)
+        #slow_count = np.sum((np.abs(window_speeds) < speed_threshold) & (window_speeds != 0))
+        slow_count1 = np.sum((window_speeds < speed_threshold) & (window_speeds > 0)) # pos velocity
+        slow_count2 = np.sum((-window_speeds < speed_threshold) & (-window_speeds > 0)) # neg velocity
+        
+        # Calculate time span in seconds
+        time_span = (window_epochs[-1] - window_epochs[0])
+        
+        # Calculate hourly rate
+        if time_span > 0:
+            rates1[i] = slow_count1 / time_span
+            rates2[i] = slow_count2 / time_span
+
+            # skewness[i] = skew(np.abs(window_speeds) > 0)
+            
+    return rates1, rates2
+
+def filter_close_events(events, datetimes, min_gap=12.0):
+    """Filter out events that occur too close together in time.
+    
+    Args:
+        events: array of 0s and 1s marking event locations
+        datetimes: array of datetime objects corresponding to each event
+        min_gap: minimum time in seconds required between events
+    
+    Returns:
+        filtered events array with close events removed
+    """
+    filtered_events = events.copy()
+    last_event_time = None
+    
+    for i in range(len(filtered_events)):
+        if filtered_events[i] == 1:
+            current_time = datetimes[i].timestamp()
+            if last_event_time is not None:
+                time_diff = current_time - last_event_time
+                if time_diff < min_gap:  # too close to previous event
+                    filtered_events[i] = 0
+                    continue
+            last_event_time = current_time
+            
+    return filtered_events
+
 def doPlot(filename):
     # Load CSV file assuming it has a header with "epoch" and "kmh"
     data = np.genfromtxt(filename, delimiter=',', names=True)
@@ -67,52 +135,73 @@ def doPlot(filename):
     else:
         annotation_text = 'No data'
 
-    # Plot
-    plt.figure(figsize=(12, 6))
-    plt.scatter([dt for i, dt in enumerate(datetimes) if not is_negative[i]],
+    # Calculate slow reading rates using specified window sizes
+    slow1, slow2 = calculate_slow_rate(epochs, speeds, window_size=150)    
+    
+    mask1 = (slow1 > 10).astype(int)    # select those areas likely to be oncoming pedestrians
+    mask2 = (slow2 > 10).astype(int)    # select those areas likely to be departing pedestrians
+
+    
+    # Expand mask2 using binary dilation
+    structure = np.ones(51)  #  points on each side plus center point
+    mask1 = binary_dilation(mask1, structure=structure)
+    mask2 = binary_dilation(mask2, structure=structure)
+    
+       # Find transitions from 0 to 1
+    events1 = np.zeros_like(mask1)
+    events1[1:] = (mask1[1:] > mask1[:-1]).astype(int)  # 1 where value increases
+    events2 = np.zeros_like(mask2)
+    events2[1:] = (mask2[1:] > mask2[:-1]).astype(int)  # 1 where value increases
+
+    # Filter out events that are too close together
+    events1 = filter_close_events(events1, datetimes, min_gap=12.0)
+    events2 = filter_close_events(events2, datetimes, min_gap=12.0)
+
+    # Create single plot
+    fig, ax1 = plt.subplots(1, 1, figsize=(12, 6))
+    
+    # Plot speeds
+    ax1.scatter([dt for i, dt in enumerate(datetimes) if not is_negative[i]],
             abs_speeds[~is_negative], color='#4088D0', label='Westbound', s=10)
-    plt.scatter([dt for i, dt in enumerate(datetimes) if is_negative[i]],
+    ax1.scatter([dt for i, dt in enumerate(datetimes) if is_negative[i]],
             abs_speeds[is_negative], color='#60A040', label='Eastbound', s=10)
-
-    plt.xlabel('Local Time (PDT)', fontsize=12)
-    plt.ylabel('Speed (mph)', fontsize = 12)  # Changed from km/h to mph
-    plt.title('Vehicle Speed vs Time')
-    plt.legend()
-    plt.grid(True)
-
-    ax = plt.gca()
-
-        # Create locator and formatter for dynamic tick spacing
-    locator = mdates.AutoDateLocator(tz=local_tz)
-    formatter = mdates.ConciseDateFormatter(locator, tz=local_tz)    
-    ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(formatter)
-    ax.format_xdata = format_time_with_tenths
     
-    # Get actual data time range instead of plot limits
-    start_dt = min(datetimes)
-    end_dt = max(datetimes)
-    span_hours = (end_dt - start_dt).total_seconds() / 3600
-
-    ax.tick_params(axis='x', labelrotation=0, labelsize=12)
-    ax.tick_params(axis='y', labelsize=12)
+    # Add mask plots to same axis
+    ax1.plot(datetimes, events1, color='blue', linestyle='-', alpha=0.5, label='Ped Coming')
+    ax1.scatter(datetimes, events1, color='blue', s=10, alpha=0.8)
+    ax1.plot(datetimes, events2, color='green', linestyle='-', alpha=0.5, label='Ped Going')
+    ax1.scatter(datetimes, events2, color='green', s=10, alpha=0.8)
     
-    # Make y-axis numbers bold
-    for label in ax.yaxis.get_ticklabels():
+    ax1.set_xlabel('Local Time (PDT)', fontsize=12)
+    ax1.set_ylabel('Speed (mph)', fontsize=12)
+    ax1.set_title('Vehicle Speed vs Time')
+    ax1.grid(True)
+    ax1.legend()
+
+    # Format x-axis
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=local_tz))
+    ax1.format_xdata = format_time_with_tenths
+    ax1.tick_params(axis='x', labelrotation=0, labelsize=12)
+    ax1.tick_params(axis='y', labelsize=12)
+    for label in ax1.yaxis.get_ticklabels():
         label.set_fontweight('bold')
     
-    # Add annotation text above plot area
-    plt.text(0.02, 1.005, annotation_text,  # Increased y position from 1.02 to 1.05
-         transform=plt.gca().transAxes,
-         verticalalignment='bottom',  # Changed from 'top' to 'bottom'
-         horizontalalignment='left',
-         fontsize=10
-         )
+    # Add annotation text above plot
+    ax1.text(0.02, 1.05, annotation_text,
+            transform=ax1.transAxes,
+            verticalalignment='bottom',
+            horizontalalignment='left',
+            fontsize=10)
 
-    # Adjust margins to make room for annotation
-    plt.subplots_adjust(top=0.92)  # Add this line before tight_layout
+
+    print("Pedestrians: coming %d, going %d" % (np.sum(events1), np.sum(events2)))
+
     plt.tight_layout()
     plt.show()
+
+    
+    #plt.plot(datetimes,mask2)
+    #plt.show()
 
 # ========== Main Function ==========
 if __name__ == "__main__":
