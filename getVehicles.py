@@ -22,12 +22,88 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
+from datetime import datetime
+import pytz
+from matplotlib import dates as mdates
 
-infile =  r"C:\Users\beale\Documents\doppler\20250518_000004_SerialLog.csv"
+infile =  r"C:\Users\beale\Documents\doppler\20250516_000003_SerialLog.csv"
+#infile =  r"C:\Users\beale\Documents\doppler\20250518_000004_SerialLog.csv"
+#infile =  r"C:\Users\beale\Documents\doppler\20250517_000004_SerialLog.csv"
+#infile = r"C:\Users\beale\Documents\doppler\20250519_0000_DpCh1.csv"
+
 #infile =  r"C:\Users\beale\Documents\doppler\20250518_clip1.csv"
 #infile =  r"C:\Users\beale\Documents\doppler\20250518_clip2.csv"
 
 doPlot = True  # Set to True to display events in a plot
+
+# Configuration parameters
+CONFIG = {
+    # Event detection parameters
+    'dbscan': {
+        'eps': 0.3,           # clustering sensitivity
+        'min_samples': 5      # minimum points to start cluster
+    },
+    
+    # Density filtering
+    'density': {
+        'min_points': 20,     # minimum points in time window
+        'time_window': 3,   # seconds to check density
+        'max_rate': 22,       # maximum sample rate in Hz
+        'required_density': 2  # unique points per second
+    },
+    
+    # Split thresholds
+    'splits': {
+        'time_gap': 2.0,      # seconds between events
+        'max_duration': 60.0,  # maximum event length in seconds
+        'velocity_gap': 10.0,  # km/h for velocity band separation
+        'jump_threshold': 8.0, # km/h for sudden velocity increases
+        'time_window': 0.8    # seconds for velocity jump detection
+    },
+    
+    # Final filtering
+    'filter': {
+        'min_points': 25      # minimum points per valid event
+    }
+}
+
+def filter_low_density_regions(df, config):
+    """Filter out regions with too few unique points per unit time using rolling window.
+    
+    Args:
+        df: DataFrame with 'epoch' column, 'kmh' column
+        config: Configuration dictionary
+    
+    Returns:
+        DataFrame with low-density points removed
+    """
+    df = df.copy()
+    times = df['epoch'].values
+    speeds = df['kmh'].values
+    n = len(times)
+    max_window_points = int(config['density']['max_rate'] * config['density']['time_window'])
+    keep_mask = np.zeros(n, dtype=bool)
+    
+    # Use sliding window of fixed size in index space
+    for i in range(n):
+        # Look at points within max_window_points indices
+        end_idx = min(i + max_window_points, n)
+        window_times = times[i:end_idx]
+        window_speeds = speeds[i:end_idx]
+        
+        # Create mask for points within time window
+        time_mask = window_times - times[i] < config['density']['time_window']
+        
+        # Get unique speed values within the time window
+        unique_speeds = np.unique(window_speeds[time_mask])
+        points_in_window = len(unique_speeds)
+        
+        if points_in_window >= config['density']['min_points']:
+            # Mark all points in this valid window as kept
+            time_indices = np.where(time_mask)[0] + i
+            keep_mask[time_indices] = True
+    
+    return df[keep_mask].reset_index(drop=True)
 
 # --- Step 1: Load and preprocess the CSV file ---
 df = pd.read_csv(infile)
@@ -35,6 +111,9 @@ df.columns = ['epoch', 'kmh']
 
 # Filter out zero velocity readings
 df = df[df['kmh'] != 0.0].reset_index(drop=True)
+
+# Filter out low density regions (e.g., rain)
+df = filter_low_density_regions(df, CONFIG)
 
 # --- Step 2: Preprocess the data ---
 # Normalize time to seconds from start
@@ -50,8 +129,8 @@ X_scaled = scaler.fit_transform(df[['time', 'velocity']].values)
 # eps: increased to allow more temporal connection
 # min_samples: reduced to catch shorter tracks
 dbscan = DBSCAN(
-    eps=0.3,           # reduced because we're using scaled features
-    min_samples=5,     # minimum points to form a cluster
+    eps=CONFIG['dbscan']['eps'],
+    min_samples=CONFIG['dbscan']['min_samples'],
     metric='euclidean'
 ).fit(X_scaled)
 
@@ -241,16 +320,18 @@ def split_clusters_by_velocity_jump(df, jump_threshold=5.0, time_window=0.8, deb
     return df
 
 # Split clusters with large time gaps
-df = split_clusters_by_time_gap(df, time_gap_threshold=2.0, max_duration=30.0)
-
-# Apply our splitting steps in sequence
+# df = split_clusters_by_time_gap(df, time_gap_threshold=2.0, max_duration=30.0)
 df = split_clusters_by_direction(df)
-df = split_clusters_by_velocity_bands(df, velocity_gap=10.0)
-df = split_clusters_by_velocity_jump(df, jump_threshold=5.0, time_window=0.8)
-df = split_clusters_by_time_gap(df, time_gap_threshold=2.0, max_duration=30.0)
+df = split_clusters_by_velocity_bands(df, velocity_gap=CONFIG['splits']['velocity_gap'])
+df = split_clusters_by_velocity_jump(df, 
+    jump_threshold=CONFIG['splits']['jump_threshold'],
+    time_window=CONFIG['splits']['time_window'])
+df = split_clusters_by_time_gap(df, 
+    time_gap_threshold=CONFIG['splits']['time_gap'],
+    max_duration=CONFIG['splits']['max_duration'])
 
 # Filter out clusters with too few points (moved after all splitting)
-min_points = 25
+min_points = CONFIG['filter']['min_points']
 valid_clusters = []
 for label in sorted(set(df['cluster'].unique()) - {-1}):
     cluster_df = df[df['cluster'] == label]
@@ -265,25 +346,36 @@ print(f"Final vehicle count after filtering: {len(valid_clusters)}")
 if doPlot:
     # --- Step 4: Plot events grouped by color ---
     plt.figure(figsize=(15, 8))
+    
+    # Convert epoch times to local datetime objects
+    local_tz = pytz.timezone('America/Los_Angeles')  # PDT/PST timezone
+    utc_tz = pytz.UTC
 
     # Plot noise points first so they're in the background
     noise = df[df['cluster'] == -1]
-    plt.scatter(noise['time'], noise['velocity'], 
+    noise_times = [datetime.fromtimestamp(ts, tz=utc_tz).astimezone(local_tz) 
+                  for ts in noise['epoch']]
+    plt.scatter(noise_times, noise['velocity'], 
             color='lightgray', alpha=0.5, label='Noise', s=10)
 
     # Plot clusters with lines connecting points
     for label in sorted(set(df['cluster'].unique()) - {-1}):  # exclude noise
-        cluster_df = df[df['cluster'] == label].sort_values('time')  # Sort by time
-        plt.scatter(cluster_df['time'], cluster_df['velocity'],
+        cluster_df = df[df['cluster'] == label].sort_values('epoch')
+        cluster_times = [datetime.fromtimestamp(ts, tz=utc_tz).astimezone(local_tz) 
+                        for ts in cluster_df['epoch']]
+        plt.scatter(cluster_times, cluster_df['velocity'],
                 label=f'Vehicle {label}', s=30, alpha=0.6)
         # Connect points within each cluster
-        plt.plot(cluster_df['time'], cluster_df['velocity'],
+        plt.plot(cluster_times, cluster_df['velocity'],
                 alpha=0.4)
 
-    plt.xlabel("Time (s since first record)")
+    # Format x-axis
+    plt.gcf().autofmt_xdate()  # Angle and align the tick labels
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M:%S', tz=local_tz))
+    
+    plt.xlabel("Local Time (PDT)")
     plt.ylabel("Speed (km/h)")
-    plt.title("Detected Vehicle Events (DBSCAN)")
-    # plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.title("Traffic Events")
     plt.grid(True)
     plt.tight_layout()
     plt.show()
@@ -318,4 +410,4 @@ for slabel in valid_clusters:
             shortPed += 1            
     print(f"{label_map[slabel]}, {len(cluster_df)}, {duration:.1f}s, {dir}, {avg_speed:.1f}, {max_speed:.1f}, {aAvg:.1f}, {isVehicle}")
           
-print(f"\nPedestrians: {ped}  <5s Ped: {shortPed}  Vehicles: {final_vehicles - (ped + shortPed)}")          
+print(f"\nPedestrians: {ped}  <5s Ped: {shortPed}  Vehicles: {final_vehicles - (ped + shortPed)}")
