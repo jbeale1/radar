@@ -25,8 +25,10 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import pytz
 from matplotlib import dates as mdates
+import os
 
-infile =  r"C:\Users\beale\Documents\doppler\20250516_000003_SerialLog.csv"
+file = r"20250519_0000_DpCh1.csv"
+#file =  r"20250516_000003_SerialLog.csv"
 #infile =  r"C:\Users\beale\Documents\doppler\20250518_000004_SerialLog.csv"
 #infile =  r"C:\Users\beale\Documents\doppler\20250517_000004_SerialLog.csv"
 #infile = r"C:\Users\beale\Documents\doppler\20250519_0000_DpCh1.csv"
@@ -34,13 +36,18 @@ infile =  r"C:\Users\beale\Documents\doppler\20250516_000003_SerialLog.csv"
 #infile =  r"C:\Users\beale\Documents\doppler\20250518_clip1.csv"
 #infile =  r"C:\Users\beale\Documents\doppler\20250518_clip2.csv"
 
+indir = r"/home/john/Documents/doppler"
+infile = os.path.join(indir, file)
+
 doPlot = True  # Set to True to display events in a plot
+#doPlot = False  # Set to True to display events in a plot
+
 
 # Configuration parameters
 CONFIG = {
     # Event detection parameters
     'dbscan': {
-        'eps': 0.3,           # clustering sensitivity
+        'eps': 0.83,           # clustering sensitivity
         'min_samples': 5      # minimum points to start cluster
     },
     
@@ -105,37 +112,6 @@ def filter_low_density_regions(df, config):
     
     return df[keep_mask].reset_index(drop=True)
 
-# --- Step 1: Load and preprocess the CSV file ---
-df = pd.read_csv(infile)
-df.columns = ['epoch', 'kmh']
-
-# Filter out zero velocity readings
-df = df[df['kmh'] != 0.0].reset_index(drop=True)
-
-# Filter out low density regions (e.g., rain)
-df = filter_low_density_regions(df, CONFIG)
-
-# --- Step 2: Preprocess the data ---
-# Normalize time to seconds from start
-df['time'] = df['epoch'] - df['epoch'].min()
-df['velocity'] = df['kmh']
-
-# Scale features to comparable ranges
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(df[['time', 'velocity']].values)
-
-# --- Step 3: Run DBSCAN clustering ---
-# Adjusted parameters:
-# eps: increased to allow more temporal connection
-# min_samples: reduced to catch shorter tracks
-dbscan = DBSCAN(
-    eps=CONFIG['dbscan']['eps'],
-    min_samples=CONFIG['dbscan']['min_samples'],
-    metric='euclidean'
-).fit(X_scaled)
-
-# Add cluster labels to DataFrame
-df['cluster'] = dbscan.labels_
 
 def split_clusters_by_time_gap(df, time_gap_threshold=2.0, max_duration=30.0):
     """Split clusters that have time gaps or exceed maximum duration.
@@ -319,6 +295,59 @@ def split_clusters_by_velocity_jump(df, jump_threshold=5.0, time_window=0.8, deb
     
     return df
 
+def get_smooth_max_speed(speeds, window_size=5):
+    """Calculate smoothed maximum speed using rolling window.
+    
+    Args:
+        speeds: numpy array of speed values
+        window_size: size of rolling window for smoothing
+    
+    Returns:
+        Smoothed maximum speed value
+    """
+    if len(speeds) < window_size:
+        return np.abs(speeds).max()
+    
+    # Use rolling window to get local averages
+    smooth_speeds = np.convolve(np.abs(speeds), 
+                               np.ones(window_size)/window_size, 
+                               mode='valid')
+    return smooth_speeds.max()
+
+# ==========================================================
+
+# --- Step 1: Load and preprocess the CSV file ---
+df = pd.read_csv(infile)
+df.columns = ['epoch', 'kmh']
+
+# Filter out zero velocity readings
+df = df[df['kmh'] != 0.0].reset_index(drop=True)
+
+# Filter out low density regions (e.g., rain)
+df = filter_low_density_regions(df, CONFIG)
+
+# --- Step 2: Preprocess the data ---
+# Normalize time to seconds from start
+df['time'] = df['epoch'] - df['epoch'].min()
+df['velocity'] = df['kmh']
+
+# Scale features to comparable ranges
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(df[['time', 'velocity']].values)
+
+# --- Step 3: Run DBSCAN clustering ---
+# Adjusted parameters:
+# eps: increased to allow more temporal connection
+# min_samples: reduced to catch shorter tracks
+dbscan = DBSCAN(
+    eps=CONFIG['dbscan']['eps'],
+    min_samples=CONFIG['dbscan']['min_samples'],
+    metric='euclidean'
+).fit(X_scaled)
+
+# Add cluster labels to DataFrame
+df['cluster'] = dbscan.labels_
+
 # Split clusters with large time gaps
 # df = split_clusters_by_time_gap(df, time_gap_threshold=2.0, max_duration=30.0)
 df = split_clusters_by_direction(df)
@@ -383,23 +412,26 @@ if doPlot:
 # Print cluster statistics
 final_vehicles = len(valid_clusters)
 print(f"Final vehicle count after splitting: {final_vehicles}")
-print("\nVehicle details:")
-# Create mapping of old labels to sequential numbers starting at 1
-label_map = {old: i+1 for i, old in enumerate(valid_clusters)}
+print("\nTraffic details:")
 
-ped = 0 # pedestrian count
-shortPed = 0 # short-duration pedestrian count
+# Create sequential label mapping
+label_map = {label: idx for idx, label in enumerate(sorted(valid_clusters))}
+ped = 0
+shortPed = 0
 
+print("ID, Points, Duration(s), Dir, AvgSpd, MaxSpd, SmoothMax, Accel, Type")
 for slabel in valid_clusters:
     isVehicle = 1
     cluster_df = df[df['cluster'] == slabel]
     duration = cluster_df['epoch'].max() - cluster_df['epoch'].min()
     speeds = cluster_df['kmh'].to_numpy()
     dir = int(np.sign(speeds.mean()))
-    accel = np.abs(np.diff(speeds)) # should divide by time, but less accurate
+    accel = np.abs(np.diff(speeds))
     aAvg = accel.mean()
     avg_speed = np.abs(speeds).mean()
     max_speed = np.abs(speeds).max()
+    
+    
     aAvg *= 20 / avg_speed  # normalize by average speed
     if (aAvg > 0.5) and (avg_speed < 10.0):        
         if (duration > 5.0):
@@ -407,7 +439,12 @@ for slabel in valid_clusters:
             ped += 1
         else:
             isVehicle = -1
-            shortPed += 1            
-    print(f"{label_map[slabel]}, {len(cluster_df)}, {duration:.1f}s, {dir}, {avg_speed:.1f}, {max_speed:.1f}, {aAvg:.1f}, {isVehicle}")
-          
-print(f"\nPedestrians: {ped}  <5s Ped: {shortPed}  Vehicles: {final_vehicles - (ped + shortPed)}")
+            shortPed += 1           
+
+    # Calculate smooth max only for likely vehicles
+    smooth_max = get_smooth_max_speed(speeds) if (isVehicle==1) else max_speed
+
+    print(f"{label_map[slabel]}, {len(cluster_df)}, {duration:.1f}, {dir}, "
+          f"{avg_speed:.1f}, {max_speed:.1f}, {smooth_max:.1f}, {aAvg:.1f}, {isVehicle}")
+    
+print(f"Ped: {ped}, <5 Ped: {shortPed}, Cars: {final_vehicles-(ped+shortPed)}")    
