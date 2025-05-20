@@ -27,16 +27,17 @@ import pytz
 from matplotlib import dates as mdates
 import os
 
-file = r"20250519_0000_DpCh1.csv"
-#file =  r"20250516_000003_SerialLog.csv"
+file = r"20250519_0000_DpCh1.csv" # fair amount of rain
+#file =  r"20250516_000003_SerialLog.csv" # no rain
 #infile =  r"C:\Users\beale\Documents\doppler\20250518_000004_SerialLog.csv"
-#infile =  r"C:\Users\beale\Documents\doppler\20250517_000004_SerialLog.csv"
+#file =  r"20250517_000004_SerialLog.csv" # morning rain
 #infile = r"C:\Users\beale\Documents\doppler\20250519_0000_DpCh1.csv"
 
 #infile =  r"C:\Users\beale\Documents\doppler\20250518_clip1.csv"
 #infile =  r"C:\Users\beale\Documents\doppler\20250518_clip2.csv"
 
-indir = r"/home/john/Documents/doppler"
+#indir = r"/home/john/Documents/doppler"
+indir = r"C:\Users\beale\Documents\doppler"
 infile = os.path.join(indir, file)
 
 doPlot = True  # Set to True to display events in a plot
@@ -47,16 +48,17 @@ doPlot = True  # Set to True to display events in a plot
 CONFIG = {
     # Event detection parameters
     'dbscan': {
-        'eps': 0.3,           # clustering sensitivity
+        'eps': 0.05,           # clustering sensitivity
         'min_samples': 5      # minimum points to start cluster
     },
     
     # Density filtering
     'density': {
-        'min_points': 20,     # minimum points in time window
-        'time_window': 3,   # seconds to check density
+        'min_points': 15,     # minimum points in time window
+        'time_window': 8,     # seconds to check density
         'max_rate': 22,       # maximum sample rate in Hz
-        'required_density': 8  # unique points per second
+        'required_density': 4,  # unique points per second
+        'speed_threshold': 20   # km/h for speed threshold above which to keep
     },
     
     # Split thresholds
@@ -82,7 +84,7 @@ def filter_low_density_regions(df, config):
         config: Configuration dictionary
     
     Returns:
-        DataFrame with low-density points removed
+        Tuple of (kept_df, rejected_df) with filtered and rejected points
     """
     df = df.copy()
     times = df['epoch'].values
@@ -104,14 +106,19 @@ def filter_low_density_regions(df, config):
         # Get unique speed values within the time window
         unique_speeds = np.unique(window_speeds[time_mask])
         points_in_window = len(unique_speeds)
+        avg_speed = np.mean(np.abs(window_speeds[time_mask]))
         
-        if points_in_window >= config['density']['min_points']:
+        if points_in_window >= config['density']['min_points'] or avg_speed > config['density']['speed_threshold']:
             # Mark all points in this valid window as kept
             time_indices = np.where(time_mask)[0] + i
             keep_mask[time_indices] = True
     
-    return df[keep_mask].reset_index(drop=True)
+    # Add statistics about filtered points
+    kept_points = np.sum(keep_mask)
+    rejected_points = n - kept_points
+    print(f"Density filter: kept {kept_points} points, removed {rejected_points} points ({rejected_points/n*100:.1f}%)")    
 
+    return df[keep_mask].reset_index(drop=True), df[~keep_mask].reset_index(drop=True)
 
 def split_clusters_by_time_gap(df, time_gap_threshold=2.0, max_duration=30.0):
     """Split clusters that have time gaps or exceed maximum duration.
@@ -328,8 +335,32 @@ df = pd.concat([chunk[chunk['kmh'] != 0.0] for chunk in df_chunks])
 df = df[df['kmh'] != 0.0].reset_index(drop=True)
 
 # Filter out low density regions (e.g., rain)
-df = filter_low_density_regions(df, CONFIG)
+kept_df, rejected_df = filter_low_density_regions(df, CONFIG)
+df = kept_df  # Continue with kept points
 
+# Add visualization of rejected points
+if doPlot:
+    plt.figure(figsize=(15, 8))
+    
+    # Convert epoch times to local datetime objects
+    local_tz = pytz.timezone('America/Los_Angeles')
+    utc_tz = pytz.UTC
+    
+    # Plot rejected points
+    rejected_times = [datetime.fromtimestamp(ts, tz=utc_tz).astimezone(local_tz) 
+                     for ts in rejected_df['epoch']]
+    plt.scatter(rejected_times, rejected_df['kmh'],
+               color='red', alpha=0.2, label='Filtered Out', s=10)
+    
+    plt.xlabel("Local Time (PDT)")
+    plt.ylabel("Speed (km/h)")
+    plt.title("Points Removed by Density Filter")
+    plt.grid(True)
+    plt.legend()
+    plt.gcf().autofmt_xdate()
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M:%S', tz=local_tz))
+    plt.tight_layout()
+    plt.show()
 
 # --- Step 2: Preprocess the data ---
 # Normalize time to seconds from start
@@ -337,18 +368,20 @@ df['time'] = df['epoch'] - df['epoch'].min()
 
 # Process in chunks for DBSCAN
 chunk_size = 5000  # Adjust based on available memory
+overlap = 1000     # Number of points to overlap between chunks
 all_labels = np.full(len(df), -1, dtype=np.int32)
 current_max_label = -1
 
-for start_idx in range(0, len(df), chunk_size):
-    end_idx = min(start_idx + chunk_size + 1000, len(df))  # 1000 point overlap
+# Process in chunks for DBSCAN
+for start_idx in range(0, len(df), chunk_size - overlap):
+    end_idx = min(start_idx + chunk_size, len(df))
     
     # Scale features for this chunk
     chunk_data = df.iloc[start_idx:end_idx][['time', 'kmh']].values
     scaler = StandardScaler()
     X_scaled_chunk = scaler.fit_transform(chunk_data)
     
-    print(f"Processing DBSCAN chunk {start_idx//chunk_size + 1}")
+    # print(f"Processing DBSCAN chunk {start_idx//(chunk_size-overlap) + 1}")
     # Run DBSCAN on chunk
     dbscan = DBSCAN(
         eps=CONFIG['dbscan']['eps'],
@@ -362,11 +395,32 @@ for start_idx in range(0, len(df), chunk_size):
         dbscan.labels_[dbscan.labels_ != -1] += (current_max_label + 1)
         current_max_label = dbscan.labels_.max()
     
-    # Store labels, avoiding overlap region except for first chunk
+    # Store labels, handling overlap region
     if start_idx == 0:
+        # First chunk - store all labels
         all_labels[start_idx:end_idx] = dbscan.labels_
     else:
-        all_labels[start_idx:end_idx-1000] = dbscan.labels_[:-1000]
+        # For subsequent chunks:
+        # 1. Find matching clusters in overlap region
+        overlap_start = start_idx
+        overlap_end = start_idx + overlap
+        overlap_old_labels = all_labels[overlap_start:overlap_end]
+        overlap_new_labels = dbscan.labels_[:overlap]
+        
+        # 2. Create mapping between old and new labels in overlap
+        label_map = {}
+        for old, new in zip(overlap_old_labels, overlap_new_labels):
+            if old != -1 and new != -1:
+                if new + current_max_label + 1 not in label_map:
+                    label_map[new + current_max_label + 1] = old
+        
+        # 3. Apply mapping to new labels
+        mapped_labels = dbscan.labels_.copy()
+        for new, old in label_map.items():
+            mapped_labels[mapped_labels == new - current_max_label - 1] = old
+        
+        # 4. Store non-overlap region
+        all_labels[start_idx + overlap:end_idx] = mapped_labels[overlap:]
     
     del X_scaled_chunk  # Free memory
 
@@ -375,7 +429,7 @@ df['cluster'] = all_labels
 print("DBSCAN clustering complete.")
 
 # Split clusters with large time gaps
-# df = split_clusters_by_time_gap(df, time_gap_threshold=2.0, max_duration=30.0)
+
 df = split_clusters_by_direction(df)
 df = split_clusters_by_velocity_bands(df, velocity_gap=CONFIG['splits']['velocity_gap'])
 df = split_clusters_by_velocity_jump(df, 
@@ -470,7 +524,7 @@ for slabel in valid_clusters:
     # Calculate smooth max only for likely vehicles
     smooth_max = get_smooth_max_speed(speeds) if (isVehicle==1) else max_speed
 
-    print(f"{label_map[slabel]}, {len(cluster_df)}, {duration:.1f}, {dir}, "
-          f"{avg_speed:.1f}, {max_speed:.1f}, {smooth_max:.1f}, {aAvg:.1f}, {isVehicle}")
+    #print(f"{label_map[slabel]}, {len(cluster_df)}, {duration:.1f}, {dir}, "
+    #      f"{avg_speed:.1f}, {max_speed:.1f}, {smooth_max:.1f}, {aAvg:.1f}, {isVehicle}")
     
 print(f"Ped: {ped}, <5 Ped: {shortPed}, Cars: {final_vehicles-(ped+shortPed)}")
