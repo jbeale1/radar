@@ -40,8 +40,8 @@ file = r"20250519_0000_DpCh1.csv" # fair amount of rain
 indir = r"C:\Users\beale\Documents\doppler"
 infile = os.path.join(indir, file)
 
-doPlot = True  # Set to True to display events in a plot
-#doPlot = False  # Set to True to display events in a plot
+#doPlot = True  # Set to True to display events in a plot
+doPlot = False  # Set to True to display events in a plot
 
 
 # Configuration parameters
@@ -426,7 +426,7 @@ for start_idx in range(0, len(df), chunk_size - overlap):
 
 # Add cluster labels to DataFrame
 df['cluster'] = all_labels
-print("DBSCAN clustering complete.")
+# print("DBSCAN clustering complete.")
 
 # Split clusters with large time gaps
 
@@ -449,8 +449,8 @@ for label in sorted(set(df['cluster'].unique()) - {-1}):
     else:
         df.loc[df['cluster'] == label, 'cluster'] = -1  # mark as noise
 
-print(f"\nDiscarded {len(set(df['cluster'].unique()) - {-1} - set(valid_clusters))} vehicles with < {min_points} points")
-print(f"Final vehicle count after filtering: {len(valid_clusters)}")
+# print(f"\nDiscarded {len(set(df['cluster'].unique()) - {-1} - set(valid_clusters))} vehicles with < {min_points} points")
+# print(f"Final vehicle count after filtering: {len(valid_clusters)}")
 
 if doPlot:
     # --- Step 4: Plot events grouped by color ---
@@ -491,15 +491,20 @@ if doPlot:
 
 # Print cluster statistics
 final_vehicles = len(valid_clusters)
-print(f"Final vehicle count after splitting: {final_vehicles}")
-print("\nTraffic details:")
+# print(f"Final vehicle count after splitting: {final_vehicles}")
+print("Traffic details for %s" % file)
 
 # Create sequential label mapping
 label_map = {label: idx for idx, label in enumerate(sorted(valid_clusters))}
 ped = 0
 shortPed = 0
 
-print("ID, Points, Duration(s), Dir, AvgSpd, MaxSpd, SmoothMax, Accel, Type")
+# print("ID, Points, Duration(s), Dir, AvgSpd, MaxSpd, SmoothMax, Accel, Type")
+# Create DataFrame to store event statistics
+event_stats = pd.DataFrame(columns=['event_id', 'points', 'duration', 'direction', 
+                                  'avg_speed', 'max_speed', 'smooth_max', 'accel', 
+                                  'type', 'start_time'])
+
 for slabel in valid_clusters:
     isVehicle = 1
     cluster_df = df[df['cluster'] == slabel]
@@ -527,4 +532,37 @@ for slabel in valid_clusters:
     #print(f"{label_map[slabel]}, {len(cluster_df)}, {duration:.1f}, {dir}, "
     #      f"{avg_speed:.1f}, {max_speed:.1f}, {smooth_max:.1f}, {aAvg:.1f}, {isVehicle}")
     
+    # Get start time of event
+    start_time = cluster_df['epoch'].min()
+    
+    # Add row to event_stats DataFrame
+    event_stats.loc[len(event_stats)] = {
+        'event_id': label_map[slabel],
+        'points': len(cluster_df),
+        'duration': duration,
+        'direction': dir,
+        'avg_speed': avg_speed,
+        'max_speed': max_speed,
+        'smooth_max': smooth_max,
+        'accel': aAvg,
+        'type': isVehicle,
+        'start_time': pd.Timestamp(start_time, unit='s', tz='UTC').tz_convert('America/Los_Angeles')
+    }
+
+# Print summary of DataFrame
+#print("\nEvent Statistics Summary:")
+#pd.set_option('display.float_format', lambda x: '%.2f' % x)
+#print(event_stats.describe())
+
 print(f"Ped: {ped}, <5 Ped: {shortPed}, Cars: {final_vehicles-(ped+shortPed)}")
+
+# Find and print details of fastest event
+fastest_event = event_stats.loc[event_stats['smooth_max'].idxmax()]
+maxT = fastest_event['start_time'].strftime('%Y-%m-%d %H:%M:%S')
+maxKMH = fastest_event['smooth_max']
+maxMPH = maxKMH * 0.621371  # Convert to mph
+maxD = fastest_event['duration']
+maxP = fastest_event['points']
+
+print(f"Fastest: %s, %.2f, %.2f, %.1f, %d" % (maxT,maxKMH,maxMPH,maxD,maxP))
+#print(f"Time: {fastest_event['start_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
