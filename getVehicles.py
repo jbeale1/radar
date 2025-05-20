@@ -47,7 +47,7 @@ doPlot = True  # Set to True to display events in a plot
 CONFIG = {
     # Event detection parameters
     'dbscan': {
-        'eps': 0.83,           # clustering sensitivity
+        'eps': 0.3,           # clustering sensitivity
         'min_samples': 5      # minimum points to start cluster
     },
     
@@ -56,7 +56,7 @@ CONFIG = {
         'min_points': 20,     # minimum points in time window
         'time_window': 3,   # seconds to check density
         'max_rate': 22,       # maximum sample rate in Hz
-        'required_density': 2  # unique points per second
+        'required_density': 8  # unique points per second
     },
     
     # Split thresholds
@@ -317,8 +317,12 @@ def get_smooth_max_speed(speeds, window_size=5):
 # ==========================================================
 
 # --- Step 1: Load and preprocess the CSV file ---
-df = pd.read_csv(infile)
-df.columns = ['epoch', 'kmh']
+chunk_size = 10000  # Adjust based on available memory
+df_chunks = pd.read_csv(infile, chunksize=chunk_size)
+df = pd.concat([chunk[chunk['kmh'] != 0.0] for chunk in df_chunks])
+
+#df['epoch'] = df['epoch'].astype(np.float32)  # instead of float64
+#df['kmh'] = df['kmh'].astype(np.float32)
 
 # Filter out zero velocity readings
 df = df[df['kmh'] != 0.0].reset_index(drop=True)
@@ -326,27 +330,49 @@ df = df[df['kmh'] != 0.0].reset_index(drop=True)
 # Filter out low density regions (e.g., rain)
 df = filter_low_density_regions(df, CONFIG)
 
+
 # --- Step 2: Preprocess the data ---
 # Normalize time to seconds from start
 df['time'] = df['epoch'] - df['epoch'].min()
-df['velocity'] = df['kmh']
 
-# Scale features to comparable ranges
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(df[['time', 'velocity']].values)
+# Process in chunks for DBSCAN
+chunk_size = 5000  # Adjust based on available memory
+all_labels = np.full(len(df), -1, dtype=np.int32)
+current_max_label = -1
 
-# --- Step 3: Run DBSCAN clustering ---
-# Adjusted parameters:
-# eps: increased to allow more temporal connection
-# min_samples: reduced to catch shorter tracks
-dbscan = DBSCAN(
-    eps=CONFIG['dbscan']['eps'],
-    min_samples=CONFIG['dbscan']['min_samples'],
-    metric='euclidean'
-).fit(X_scaled)
+for start_idx in range(0, len(df), chunk_size):
+    end_idx = min(start_idx + chunk_size + 1000, len(df))  # 1000 point overlap
+    
+    # Scale features for this chunk
+    chunk_data = df.iloc[start_idx:end_idx][['time', 'kmh']].values
+    scaler = StandardScaler()
+    X_scaled_chunk = scaler.fit_transform(chunk_data)
+    
+    print(f"Processing DBSCAN chunk {start_idx//chunk_size + 1}")
+    # Run DBSCAN on chunk
+    dbscan = DBSCAN(
+        eps=CONFIG['dbscan']['eps'],
+        min_samples=CONFIG['dbscan']['min_samples'],
+        metric='euclidean'
+    ).fit(X_scaled_chunk)
+    
+    # Adjust labels to not overlap with previous chunks
+    valid_labels = dbscan.labels_[dbscan.labels_ != -1]
+    if len(valid_labels) > 0:
+        dbscan.labels_[dbscan.labels_ != -1] += (current_max_label + 1)
+        current_max_label = dbscan.labels_.max()
+    
+    # Store labels, avoiding overlap region except for first chunk
+    if start_idx == 0:
+        all_labels[start_idx:end_idx] = dbscan.labels_
+    else:
+        all_labels[start_idx:end_idx-1000] = dbscan.labels_[:-1000]
+    
+    del X_scaled_chunk  # Free memory
 
 # Add cluster labels to DataFrame
-df['cluster'] = dbscan.labels_
+df['cluster'] = all_labels
+print("DBSCAN clustering complete.")
 
 # Split clusters with large time gaps
 # df = split_clusters_by_time_gap(df, time_gap_threshold=2.0, max_duration=30.0)
@@ -384,7 +410,7 @@ if doPlot:
     noise = df[df['cluster'] == -1]
     noise_times = [datetime.fromtimestamp(ts, tz=utc_tz).astimezone(local_tz) 
                   for ts in noise['epoch']]
-    plt.scatter(noise_times, noise['velocity'], 
+    plt.scatter(noise_times, noise['kmh'], 
             color='lightgray', alpha=0.5, label='Noise', s=10)
 
     # Plot clusters with lines connecting points
@@ -392,10 +418,10 @@ if doPlot:
         cluster_df = df[df['cluster'] == label].sort_values('epoch')
         cluster_times = [datetime.fromtimestamp(ts, tz=utc_tz).astimezone(local_tz) 
                         for ts in cluster_df['epoch']]
-        plt.scatter(cluster_times, cluster_df['velocity'],
+        plt.scatter(cluster_times, cluster_df['kmh'],
                 label=f'Vehicle {label}', s=30, alpha=0.6)
         # Connect points within each cluster
-        plt.plot(cluster_times, cluster_df['velocity'],
+        plt.plot(cluster_times, cluster_df['kmh'],
                 alpha=0.4)
 
     # Format x-axis
@@ -447,4 +473,4 @@ for slabel in valid_clusters:
     print(f"{label_map[slabel]}, {len(cluster_df)}, {duration:.1f}, {dir}, "
           f"{avg_speed:.1f}, {max_speed:.1f}, {smooth_max:.1f}, {aAvg:.1f}, {isVehicle}")
     
-print(f"Ped: {ped}, <5 Ped: {shortPed}, Cars: {final_vehicles-(ped+shortPed)}")    
+print(f"Ped: {ped}, <5 Ped: {shortPed}, Cars: {final_vehicles-(ped+shortPed)}")
