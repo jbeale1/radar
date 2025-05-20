@@ -314,11 +314,17 @@ def get_smooth_max_speed(speeds, window_size=5):
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) != 2:
-        print("Usage: python %s <filename>" % sys.argv[0])
-        sys.exit(1)
+    import argparse
 
-    file = sys.argv[1]
+    # Set up command line argument parsing
+    parser = argparse.ArgumentParser(description='Process doppler radar data')
+    parser.add_argument('filename', help='Input CSV file to process')
+    parser.add_argument('-n', '--no-plot', action='store_true', 
+                      help='Disable plotting (run in non-interactive mode)')
+
+    args = parser.parse_args()
+    file = args.filename
+    doPlot = not args.no_plot  # True by default, False if -n is specified
 
     #file = r"20250519_0000_DpCh1.csv" # fair amount of rain
     #file =  r"20250516_000003_SerialLog.csv" # no rain
@@ -334,8 +340,8 @@ if __name__ == "__main__":
     indir = r"C:\Users\beale\Documents\doppler"
     infile = os.path.join(indir, file)
 
-    #doPlot = True  # Set to True to display events in a plot
-    doPlot = False  # Set to True to display events in a plot
+    # Remove or comment out the hardcoded doPlot assignment
+    #doPlot = False  # Set to True to display events in a plot
 
     # --- Step 1: Load and preprocess the CSV file ---
     chunk_size = 10000  # Adjust based on available memory
@@ -567,7 +573,7 @@ if __name__ == "__main__":
     #pd.set_option('display.float_format', lambda x: '%.2f' % x)
     #print(event_stats.describe())
 
-    print("%s,%.1f,%d,%d,%d," % (file,pctRejected,ped,shortPed,(final_vehicles-(ped+shortPed))), end=" ")
+    print("%30s,%4.1f,%3d,%3d,%3d, " % (file,pctRejected,ped,shortPed,(final_vehicles-(ped+shortPed))), end="")
 
     # Find and print details of fastest event
     fastest_event = event_stats.loc[event_stats['smooth_max'].idxmax()]
@@ -577,4 +583,4 @@ if __name__ == "__main__":
     maxD = fastest_event['duration']
     maxP = fastest_event['points']
 
-    print(f"%s, %.2f, %.2f, %.1f, %d" % (maxT,maxKMH,maxMPH,maxD,maxP))
+    print(f"%s, %.2f, %.2f, %4.1f, %3d" % (maxT,maxKMH,maxMPH,maxD,maxP))

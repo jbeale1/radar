@@ -8,7 +8,7 @@ import subprocess
 directory = r"C:\Users\beale\Documents\doppler"
 
 # Pattern to match files
-pattern = os.path.join(directory, '202505*_0000*.csv')
+pattern = os.path.join(directory, '202505*_0000_DpCh1.csv')
 
 # Find matching files
 matching_files = glob.glob(pattern)
@@ -20,4 +20,4 @@ pycmd = r"C:/ProgramData/Anaconda3/envs/ds/python.exe"
 for file_path in matching_files:
     file = os.path.basename(file_path)
     # print(f"Processing file: {file}")
-    subprocess.run([pycmd, script_to_call, file])
+    subprocess.run([pycmd, script_to_call, '-n', file])
