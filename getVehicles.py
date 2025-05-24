@@ -290,7 +290,12 @@ def split_clusters_by_velocity_jump(df, jump_threshold=5.0, time_window=0.8, deb
     
     return df
 
-def get_smooth_max_speed(speeds, window_size=5):
+def median_filter(vec):    
+    padded = np.pad(vec, pad_width=1, mode='edge')
+    filtered = np.median(np.stack([padded[:-2], padded[1:-1], padded[2:]]), axis=0)
+    return filtered
+
+def get_smooth_max_speed(speeds, window_size=9):
     """Calculate smoothed maximum speed using rolling window.
     
     Args:
@@ -302,11 +307,27 @@ def get_smooth_max_speed(speeds, window_size=5):
     """
     if len(speeds) < window_size:
         return np.abs(speeds).max()
-    
+                
+    even_idx = speeds[::2]  # all even-indexed elements (0, 2, 4, ...)
+    odd_idx = speeds[1::2]  # all odd-indexed elements (1, 3, 5, ...)
+    evenf = median_filter(even_idx)
+    oddf = median_filter(odd_idx)   
+
+    combined = np.empty(len(speeds), dtype=np.float32)  
+    combined[::2] = evenf
+    combined[1::2] = oddf
+    speeds = median_filter(np.abs(combined))
+
+
     # Use rolling window to get local averages
-    smooth_speeds = np.convolve(np.abs(speeds), 
+    smooth_speeds = np.convolve(speeds, 
                                np.ones(window_size)/window_size, 
                                mode='valid')
+
+    #plt.plot(speeds, label='median') # debug
+    #plt.plot(smooth_speeds, label='smoothed') # debug
+    #plt.show()
+
     return smooth_speeds.max()
 
 # ==========================================================
@@ -328,13 +349,6 @@ if __name__ == "__main__":
 
     #file = r"20250519_0000_DpCh1.csv" # fair amount of rain
     #file =  r"20250516_000003_SerialLog.csv" # no rain
-
-    #infile =  r"C:\Users\beale\Documents\doppler\20250518_000004_SerialLog.csv"
-    #file =  r"20250517_000004_SerialLog.csv" # morning rain
-    #infile = r"C:\Users\beale\Documents\doppler\20250519_0000_DpCh1.csv"
-
-    #infile =  r"C:\Users\beale\Documents\doppler\20250518_clip1.csv"
-    #infile =  r"C:\Users\beale\Documents\doppler\20250518_clip2.csv"
 
     #indir = r"/home/john/Documents/doppler"
     indir = r"C:\Users\beale\Documents\doppler"
@@ -584,3 +598,7 @@ if __name__ == "__main__":
     maxP = fastest_event['points']
 
     print(f"%s, %.2f, %.2f, %4.1f, %3d" % (maxT,maxKMH,maxMPH,maxD,maxP))
+
+    summaryPath = os.path.join(indir, file[:-4]+"_summary.csv")  
+    event_stats.to_csv(summaryPath, index=False, float_format='%.4f') # save event statistics to CSV
+    print(f"Event statistics saved to {summaryPath}")
