@@ -110,22 +110,18 @@ def integrate_with_drift_control(data, sample_rate=60.0, drift_time=120.0):
     
     return filtered_data
 
-# Example usage:
+# =============================================
+# Main script
+# =============================================
 
-# indir=r"/home/john/Documents/source"
+#indir=r"/home/john/Documents/source"
+indir = r"C:\Users\beale\Documents\Tiltmeter"
 
-indir=r"/home/john/Documents/source"
-#fname = r"20250521-1348_adc1256-log2.csv"
-fname = r"20250521-1657_adc1256-log2.csv"
-#indir = r"C:\Users\beale\Documents\Tiltmeter"
-#fname = r"20250520-2207_adc1256-log2.csv"
-#fname = r"20250520-2240_adc1256-log2.csv"
-#fname = r"20250520-2253_adc1256-log2.csv"
-#fname = r"20250520-2258_adc1256-log2.csv"
+fname = r"20250523-0846_adc1256-log2.csv"
+
 fpath = os.path.join(indir, fname)
 
 timestamps, readings = decodeFile(fpath)
-#print(list(zip(timestamps, readings)))
 
 # Convert Unix timestamps to datetime objects with PDT timezone
 pdt = ZoneInfo("America/Los_Angeles")
@@ -137,15 +133,13 @@ filtered_readings_01hz = apply_lowpass_filter(readings, cutoff_freq=0.1)
 integ = smooth3(integrate_with_drift_control(readings))
 integ = apply_lowpass_filter(integ, cutoff_freq=10.0)
 
-
-# Create the plot
 plt.figure(figsize=(12, 6))
 
 # Plot raw and filtered data
-# raw_line = plt.plot(datetimes, readings/100.0, 'b-', linewidth=1, alpha=0.3, label='Raw')[0]
+raw_line = plt.plot(datetimes, readings/100.0, 'b-', linewidth=1, alpha=0.3, label='Raw')[0]
 #filtered_line_1hz = plt.plot(datetimes, filtered_readings_1hz, 'y-', linewidth=1, alpha=0.7, label='1 Hz LP')[0]
-filtered_line_01hz = plt.plot(datetimes, filtered_readings_01hz, 'g-', linewidth=1, alpha=0.7, label='0.1 Hz LP')[0]
-integrated_line = plt.plot(datetimes, integ, 'b-', linewidth=1, alpha=0.7, label='Integrated')[0]
+#filtered_line_01hz = plt.plot(datetimes, filtered_readings_01hz, 'g-', linewidth=1, alpha=0.7, label='0.1 Hz LP')[0]
+integrated_line = plt.plot(datetimes, integ, 'g-', linewidth=1, alpha=0.7, label='Integrated')[0]
 
 # Create interactive legend
 leg = plt.legend(loc='upper right', framealpha=0.8)
@@ -187,11 +181,11 @@ def custom_formatter(x, p):
     time_range = np.diff(ax.get_xlim())[0]  # Get current x-axis span in days
     seconds_range = time_range * 24 * 3600
     
-    if seconds_range > 300:  # More than 5 minutes shown
+    if seconds_range > 600:  # More than 10 minutes shown
         return dt.strftime('%H:%M')
-    elif seconds_range > 30:  # Between 30 seconds and 5 minutes
+    elif seconds_range > 60:  # Between 60 seconds and 10 minutes
         return dt.strftime('%H:%M:%S')
-    else:  # Less than 30 seconds shown
+    else:  # Less than 60 seconds shown
         return dt.strftime('%H:%M:%S.%f')[:-4]  # Show 2 decimal places
 
 ax = plt.gca()
