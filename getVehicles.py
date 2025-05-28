@@ -539,9 +539,11 @@ if __name__ == "__main__":
                                     'type', 'start_time'])
 
     for slabel in valid_clusters:
+        start_epoch = cluster_df['epoch'].min()  # Get start time of event
+        end_epoch = cluster_df['epoch'].max()
         isVehicle = 1
         cluster_df = df[df['cluster'] == slabel]
-        duration = cluster_df['epoch'].max() - cluster_df['epoch'].min()
+        duration = end_epoch - start_epoch
         speeds = cluster_df['kmh'].to_numpy()
         dir = int(np.sign(speeds.mean()))
         accel = np.abs(np.diff(speeds))
@@ -565,10 +567,17 @@ if __name__ == "__main__":
         #print(f"{label_map[slabel]}, {len(cluster_df)}, {duration:.1f}, {dir}, "
         #      f"{avg_speed:.1f}, {max_speed:.1f}, {smooth_max:.1f}, {aAvg:.1f}, {isVehicle}")
         
-        # Get start time of event
-        start_time = cluster_df['epoch'].min()
         
         # Modify where the start_time is added to event_stats DataFrame
+        # Create timestamp with formatted fractional seconds
+        timestamp = pd.Timestamp(start_epoch, unit='s')
+        timestamp_utc = timestamp.tz_localize('UTC')
+        timestamp_local = timestamp_utc.tz_convert('America/Los_Angeles')
+        formatted_time = timestamp_local.strftime('%Y-%m-%d %H:%M:%S')
+        fractional_seconds = f'.{int((start_epoch % 1) * 100):02d}'
+        formatted_timestamp = formatted_time + fractional_seconds
+
+        # Add event to statistics DataFrame
         event_stats.loc[len(event_stats)] = {
             'event_id': label_map[slabel],
             'points': len(cluster_df),
@@ -579,7 +588,7 @@ if __name__ == "__main__":
             'smooth_max': smooth_max,
             'accel': aAvg,
             'type': isVehicle,
-            'start_time': pd.Timestamp(start_time, unit='s').tz_localize('UTC').tz_convert('America/Los_Angeles').strftime('%Y-%m-%d %H:%M:%S.%02f')
+            'start_time': formatted_timestamp
         }
 
     # Print summary of DataFrame
