@@ -351,8 +351,8 @@ if __name__ == "__main__":
     #file =  r"20250516_000003_SerialLog.csv" # no rain
 
     #indir = r"/home/john/Documents/doppler"
-    indir = r"/home/jbeale/Documents/doppler"
-    #indir = r"C:\Users\beale\Documents\doppler"
+    #indir = r"/home/jbeale/Documents/doppler"
+    indir = r"C:\Users\beale\Documents\doppler"
     infile = os.path.join(indir, file)
 
     # Remove or comment out the hardcoded doPlot assignment
@@ -536,7 +536,7 @@ if __name__ == "__main__":
     # Create DataFrame to store event statistics
     event_stats = pd.DataFrame(columns=['event_id', 'points', 'duration', 'direction', 
                                     'avg_speed', 'max_speed', 'smooth_max', 'accel', 
-                                    'type', 'start_time'])
+                                    'type', 'epoch', 'start_time'])
 
     for slabel in valid_clusters:
         start_epoch = cluster_df['epoch'].min()  # Get start time of event
@@ -588,6 +588,7 @@ if __name__ == "__main__":
             'smooth_max': smooth_max,
             'accel': aAvg,
             'type': isVehicle,
+            'epoch': start_epoch,
             'start_time': formatted_timestamp
         }
 
