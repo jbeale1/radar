@@ -351,7 +351,8 @@ if __name__ == "__main__":
     #file =  r"20250516_000003_SerialLog.csv" # no rain
 
     #indir = r"/home/john/Documents/doppler"
-    indir = r"C:\Users\beale\Documents\doppler"
+    indir = r"/home/jbeale/Documents/doppler"
+    #indir = r"C:\Users\beale\Documents\doppler"
     infile = os.path.join(indir, file)
 
     # Remove or comment out the hardcoded doPlot assignment
@@ -496,8 +497,7 @@ if __name__ == "__main__":
 
         # Plot noise points first so they're in the background
         noise = df[df['cluster'] == -1]
-        noise_times = [datetime.fromtimestamp(ts, tz=utc_tz).astimezone(local_tz) 
-                    for ts in noise['epoch']]
+        noise_times = [datetime.fromtimestamp(ts, tz=utc_tz).astimezone(local_tz) for ts in noise['epoch']]
         plt.scatter(noise_times, noise['kmh'], 
                 color='lightgray', alpha=0.5, label='Noise', s=10)
 
@@ -568,7 +568,7 @@ if __name__ == "__main__":
         # Get start time of event
         start_time = cluster_df['epoch'].min()
         
-        # Add row to event_stats DataFrame
+        # Modify where the start_time is added to event_stats DataFrame
         event_stats.loc[len(event_stats)] = {
             'event_id': label_map[slabel],
             'points': len(cluster_df),
@@ -579,7 +579,7 @@ if __name__ == "__main__":
             'smooth_max': smooth_max,
             'accel': aAvg,
             'type': isVehicle,
-            'start_time': pd.Timestamp(start_time, unit='s', tz='UTC').tz_convert('America/Los_Angeles')
+            'start_time': pd.Timestamp(start_time, unit='s').tz_localize('UTC').tz_convert('America/Los_Angeles').strftime('%Y-%m-%d %H:%M:%S.%02f')
         }
 
     # Print summary of DataFrame
@@ -591,7 +591,7 @@ if __name__ == "__main__":
 
     # Find and print details of fastest event
     fastest_event = event_stats.loc[event_stats['smooth_max'].idxmax()]
-    maxT = fastest_event['start_time'].strftime('%Y-%m-%d %H:%M:%S')
+    maxT = fastest_event['start_time']
     maxKMH = fastest_event['smooth_max']
     maxMPH = maxKMH * 0.621371  # Convert to mph
     maxD = fastest_event['duration']
@@ -599,6 +599,7 @@ if __name__ == "__main__":
 
     print(f"%s, %.2f, %.2f, %4.1f, %3d" % (maxT,maxKMH,maxMPH,maxD,maxP))
 
+    event_stats = event_stats.sort_values('start_time', ascending=True) # in order by start time
     summaryPath = os.path.join(indir, file[:-4]+"_summary.csv")  
     event_stats.to_csv(summaryPath, index=False, float_format='%.4f') # save event statistics to CSV
     print(f"Event statistics saved to {summaryPath}")
