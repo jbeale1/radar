@@ -5,21 +5,18 @@ import pandas as pd
 import os
 
 def load_data(ch1_file, ch2_file):
-    """Load and preprocess data from two CSV files.
-    
-    Args:
-        ch1_file: Path to first channel CSV file
-        ch2_file: Path to second channel CSV file
-    
-    Returns:
-        Tuple of (df_ch1, df_ch2) preprocessed DataFrames
-    """
+    """Load and preprocess data from two CSV files."""
     try:
         df_ch1 = pd.read_csv(ch1_file)
         df_ch2 = pd.read_csv(ch2_file)
         
         print(f"Channel 1: {len(df_ch1)} total events")
         print(f"Channel 2: {len(df_ch2)} total events")
+        
+        # Add event_id if not present
+        for df in [df_ch1, df_ch2]:
+            if 'event_id' not in df.columns:
+                df.insert(0, 'event_id', range(1, len(df) + 1))
         
         # Filter to only event type 1
         df_ch1 = df_ch1[df_ch1['type'] == 1].copy()
@@ -32,6 +29,10 @@ def load_data(ch1_file, ch2_file):
         df_ch1['end_epoch'] = df_ch1['epoch'] + df_ch1['duration']
         df_ch2['end_epoch'] = df_ch2['epoch'] + df_ch2['duration']
         
+        # Renumber event_ids after filtering
+        df_ch1['event_id'] = range(1, len(df_ch1) + 1)
+        df_ch2['event_id'] = range(1, len(df_ch2) + 1)
+        
         return df_ch1.reset_index(drop=True), df_ch2.reset_index(drop=True)
         
     except pd.errors.EmptyDataError:
@@ -41,25 +42,26 @@ def load_data(ch1_file, ch2_file):
         print(f"Error loading data: {str(e)}")
         return pd.DataFrame(), pd.DataFrame()
 
-def find_directional_matches(df_ch1, df_ch2, time_tolerance=5):
+def find_directional_matches(df_ch1, df_ch2, time_tolerance=4.5):
     matches = []
 
     for i, ch1_event in df_ch1.iterrows():
         for j, ch2_event in df_ch2.iterrows():
-            if ch1_event['direction'] == 1 and ch2_event['direction'] == -1:
+            if ch1_event['direction'] == 1 and ch2_event['direction'] == -1: # OK for some
                 # Ch1 → Ch2: match ch1 end to ch2 start
-                diff = (ch2_event['epoch'] - ch1_event['end_epoch'])
-                if diff <= time_tolerance:
+                ch1_end = ch1_event['end_epoch']
+                diff = (ch2_event['epoch'] - ch1_end)
+                if diff <= time_tolerance and diff >= -2.0:
                     matches.append((i, j, diff))
             elif ch1_event['direction'] == -1 and ch2_event['direction'] == 1:
                 # Ch2 → Ch1: match ch2 end to ch1 start
                 ch2_end = ch2_event['end_epoch']
-                diff = abs(ch1_event['epoch'] - ch2_end)
-                if diff <= time_tolerance:
+                diff = (ch1_event['epoch'] - ch2_end)
+                if diff <= time_tolerance and diff >= -2.0:
                     matches.append((i, j, diff))
 
     # Sort by smallest time difference
-    matches.sort(key=lambda x: x[2])
+    # matches.sort(key=lambda x: x[2])
 
     matched_ch1 = set()
     matched_ch2 = set()
@@ -88,24 +90,24 @@ def classify_matches(df_ch1, df_ch2, matches):
             'ch1_event_id': df_ch1.loc[i, 'event_id'],
             'ch2_event_id': df_ch2.loc[j, 'event_id'],
             'time_diff_sec': diff,
-            'ch1_speed_kmh': df_ch1.loc[i, 'smooth_max'],
-            'ch2_speed_kmh': df_ch2.loc[j, 'smooth_max'],
-            'ch1_time': df_ch1.loc[i, 'start_time']          
+            'ch1_speed_kmh': df_ch1.loc[i, 'max_speed'],    # Changed from smooth_max
+            'ch2_speed_kmh': df_ch2.loc[j, 'max_speed'],    # Changed from smooth_max
+            'ch1_time': df_ch1.loc[i, 'time']          
         })
 
     matched_df = pd.DataFrame(matched_rows)
     
     # Sort the DataFrames
-    unmatched_ch1.sort_values(by='start_time', inplace=True)
-    unmatched_ch2.sort_values(by='start_time', inplace=True)    
+    unmatched_ch1.sort_values(by='epoch', inplace=True)
+    unmatched_ch2.sort_values(by='epoch', inplace=True)    
     matched_df.sort_values(by='ch1_time', inplace=True)
     
     return matched_df, unmatched_ch1, unmatched_ch2
 
 def main():
     directory = r"C:\Users\beale\Documents\doppler" 
-    ch1_file = "20250527_0000_DpCh1_summary.csv"
-    ch2_file = "20250527_0000_DpCh2_summary.csv"
+    ch1_file = "20250529_0000_DpCh1_summary.csv"
+    ch2_file = "20250529_0000_DpCh2_summary.csv"
 
     path1 = os.path.join(directory, ch1_file)
     path2 = os.path.join(directory, ch2_file)
@@ -119,8 +121,10 @@ def main():
     matched_df, unmatched_ch1, unmatched_ch2 = classify_matches(df_ch1, df_ch2, matches)
 
     print("Matched Event Pairs with Speeds (km/h):\n", matched_df)
-    print("\nUnmatched Events from Ch1:\n", unmatched_ch1[['event_id', 'start_time', 'direction', 'smooth_max']])
-    print("\nUnmatched Events from Ch2:\n", unmatched_ch2[['event_id', 'start_time', 'direction', 'smooth_max']])
+    print("\nUnmatched Events from Ch1:\n", 
+          unmatched_ch1[['event_id', 'time', 'duration', 'direction', 'max_speed']])  # Changed
+    print("\nUnmatched Events from Ch2:\n", 
+          unmatched_ch2[['event_id', 'time', 'duration', 'direction', 'max_speed']])  # Changed
     print(f"\nFound {len(matches)} matching event pairs")
     print(f"Unmatched in Ch1: {len(unmatched_ch1)}")
     print(f"Unmatched in Ch2: {len(unmatched_ch2)}")

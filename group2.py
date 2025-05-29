@@ -5,6 +5,8 @@ import os
 import matplotlib.pyplot as plt
 from datetime import datetime
 import pytz
+import glob
+import re
 
 import numpy as np
 import pandas as pd
@@ -73,8 +75,7 @@ def get_robust_max_speed(seg):
         cs_m = cs_h.copy()
     else:
         cs_m = medfilt(cs_h, kernel_size=med_w)
-
-    #cs_m = medfilt(cs_h, kernel_size=med_w)
+    
     if len(cs_m) >= sg_w:
         cs_s = savgol_filter(cs_m, window_length=sg_w, polyorder=2)
     else:
@@ -149,6 +150,10 @@ def detect_motion_events_seg(df,
             # Calculate robust maximum speed
             robust_max = get_robust_max_speed(seg)
             
+            # Format time string
+            dt = datetime.fromtimestamp(t0)
+            time_str = dt.strftime('%H:%M:%S.%f')[:-4]  # Keep 2 decimal places
+            
             # Modify type assignment to include short pedestrians
             if speeds.mean() > 15.0:
                 event_type = 1  # vehicle
@@ -158,35 +163,55 @@ def detect_motion_events_seg(df,
                 event_type = 0  # normal pedestrian
                 
             events.append({
-                'start_time': t0,
-                'end_time':   t1,
-                'duration':   duration,
-                'samples':    n_pts,     # Add number of samples
-                'avg_speed':  speeds.mean(),
-                'max_speed':  robust_max,  # Use robust maximum
-                'direction':  int(np.sign(avg_vel)),
-                'type':       event_type
+                'epoch':      t0,         # start time in epoch seconds
+                'time':       time_str,   # time in HH:MM:SS.ss format
+                'duration':   duration,    # duration in seconds
+                'samples':    n_pts,      # number of samples in segment
+                'avg_speed':  speeds.mean(), # average speed in km/h
+                'max_speed':  robust_max,    # robust max speed in km/h
+                'direction':  int(np.sign(avg_vel)), # direction: 1 for forward, -1 for backward
+                'type':       event_type  # event type: 1=vehicle, 0=pedestrian, -1=noise
             })
 
-    return pd.DataFrame(events)
+    events_df = pd.DataFrame(events)
+    
+    return events_df  # Remove event_id addition
 
 def process_radar_file(fname: str, indir: str, show_plot: bool = True):
     """
-    Process a radar data file and detect motion events.
+    Process radar data file(s) and detect motion events.
+    Handles wildcards in filenames - e.g., '20250529_0000_DpCh1.csv' will process
+    all files matching '20250529_????_DpCh1.csv'
     
     Args:
-        fname: Name of the input CSV file
-        indir: Directory containing the input file
+        fname: Name pattern of input CSV file(s)
+        indir: Directory containing the input file(s)
         show_plot: Whether to display the plot (default: True)
     
     Returns:
         pd.DataFrame: DataFrame containing detected events
     """
-    inpath = os.path.join(indir, fname)
-    outpath = os.path.join(indir, fname.replace('.csv', '_seg_events.csv'))
-
-    # load and filter zeros
-    df = pd.read_csv(inpath)
+    # Convert single filename to pattern
+    pattern = re.sub(r'_\d{4}_', '_????_', fname)
+    file_pattern = os.path.join(indir, pattern)
+    
+    # Get list of matching files
+    files = sorted(glob.glob(file_pattern))
+    if not files:
+        print(f"No files found matching pattern: {file_pattern}")
+        return None
+    
+    # print(f"Processing {len(files)} files matching {pattern}")
+    
+    # Load and concatenate all matching files
+    df_list = []
+    for f in files:
+        print(f"Reading {os.path.basename(f)}")
+        df = pd.read_csv(f)
+        df_list.append(df)
+    
+    df = pd.concat(df_list, ignore_index=True)
+    df = df.sort_values('epoch').reset_index(drop=True)
     df = df[df['kmh'] != 0.0].copy()
 
     all_events = []
@@ -210,7 +235,9 @@ def process_radar_file(fname: str, indir: str, show_plot: bool = True):
         return None
 
     events_df = pd.concat(all_events, ignore_index=True)
-    events_df = events_df.sort_values('start_time').reset_index(drop=True)
+    events_df = events_df.sort_values('epoch').reset_index(drop=True)
+    
+    outpath = os.path.join(indir, fname.replace('.csv', '_summary.csv'))
     events_df.to_csv(outpath, index=False)
     print(events_df)
     print(f"Detected {len(events_df)} motion events → {outpath}")
@@ -295,10 +322,9 @@ def plot_events(df: pd.DataFrame, events_df: pd.DataFrame, title: str):
     
     for idx, ev in events_df.iterrows():
         mask = (
-            (df['epoch'] >= ev['start_time']) &
-            (df['epoch'] <= ev['end_time']) &
-            (np.sign(df['kmh']) == ev['direction']) &
-            True
+            (df['epoch'] >= ev['epoch']) &
+            (df['epoch'] <= (ev['epoch'] + ev['duration'])) &  # Reconstruct end time
+            (np.sign(df['kmh']) == ev['direction'])
         )
         seg = df[mask]
         times = [datetime.fromtimestamp(ts, tz=utc).astimezone(local_tz)
@@ -342,7 +368,7 @@ def plot_events(df: pd.DataFrame, events_df: pd.DataFrame, title: str):
     
     plt.xlabel('Time')
     plt.ylabel('Speed (km/h)')
-    plt.title(f'Motion Events (segmentation) - {title}')
+    plt.title(f'Road Traffic - {title}')
     plt.grid(True, alpha=0.3)
     if len(events_df) < 10:
         plt.legend()
@@ -352,10 +378,11 @@ def plot_events(df: pd.DataFrame, events_df: pd.DataFrame, title: str):
 
 if __name__ == "__main__":
     # adjust paths as needed
-    fname1 = '20250528_0000_DpCh1.csv'
-    fname2 = '20250528_0000_DpCh2.csv'
+    fname1 = '20250529_0000_DpCh1.csv'
+    fname2 = '20250529_0000_DpCh2.csv'
     # indir = r"/home/jbeale/Documents/doppler"
     indir = r"C:\Users\beale\Documents\doppler"
     
-    process_radar_file(fname1, indir, show_plot=False)
-    process_radar_file(fname2, indir, show_plot=False)
+    doPlot = True  # set to False to skip plotting
+    process_radar_file(fname1, indir, show_plot=doPlot)
+    process_radar_file(fname2, indir, show_plot=doPlot)
