@@ -6,6 +6,104 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import pytz
 
+import numpy as np
+import pandas as pd
+from scipy.signal import medfilt, savgol_filter
+
+def hampel_filter(x, window_size=11, n_sigmas=3):
+    """
+    A Hampel filter to replace outliers in x with the local median.
+    """
+    x = pd.Series(x)
+    k = 1.4826  # scale factor for Gaussian
+    rolling_median = x.rolling(window_size, center=True, min_periods=1).median()
+    mad = x.rolling(window_size, center=True, min_periods=1) \
+           .apply(lambda w: np.median(np.abs(w - np.median(w))), raw=True)
+    threshold = n_sigmas * k * mad
+    outliers = np.abs(x - rolling_median) > threshold
+    x[outliers] = rolling_median[outliers]
+    return x.values
+
+def get_robust_max_speed(seg):
+    """
+    Adaptive, outlier-resistant max-speed estimator.
+    """
+    times  = seg['epoch'].values
+    speeds = np.abs(seg['kmh'].values)
+    n = len(times)
+    if n < 70:
+        return np.median(speeds)
+
+    # 1) isolate central 60% of the pass
+    peak_idx    = np.argmax(np.abs(speeds))
+    center_time = times[peak_idx]
+    tspan       = times[-1] - times[0]
+    mid_mask    = np.abs(times - center_time) < 0.3 * tspan
+    cs_raw      = speeds[mid_mask]
+    if len(cs_raw) < 5:
+        return np.median(speeds)
+
+    # 2) choose pedestrian vs. vehicle parameters
+    raw_max = np.max(cs_raw)
+    if raw_max < 20.0:
+        # pedestrian
+        med_w    = 41    # median window
+        sg_w     = 41    # SavGol window (odd)
+        roll_w   = 15    # rolling quantile window
+        perc     = 85    # percentile for rolling quantile
+        sigma_k  = 2     # Hampel sensitivity
+    else:
+        # vehicle
+        med_w    = 7
+        sg_w     = 11
+        roll_w   = 9
+        perc     = 90
+        sigma_k  = 3
+
+    # 3) knock down spikes
+    cs_h = hampel_filter(cs_raw, window_size=med_w, n_sigmas=sigma_k)
+
+    # 4) smooth
+    
+    # ensure med_w is odd and no larger than len(cs_h)
+    n     = len(cs_h)
+    med_w = min(med_w, n if n%2==1 else n-1)
+    if med_w < 3:
+        # if your signal is very short, just skip the filter altogether:
+        cs_m = cs_h.copy()
+    else:
+        cs_m = medfilt(cs_h, kernel_size=med_w)
+
+    #cs_m = medfilt(cs_h, kernel_size=med_w)
+    if len(cs_m) >= sg_w:
+        cs_s = savgol_filter(cs_m, window_length=sg_w, polyorder=2)
+    else:
+        cs_s = cs_m
+
+    # 5) rolling-quantile to create a very smooth “upper envelope”
+    s = pd.Series(cs_s)
+    rq = s.rolling(window=roll_w, center=True, min_periods=1) \
+          .quantile(perc/100.0)
+
+    # 6) plateau average: take the mean of the top pct of that envelope
+    thresh = np.percentile(rq.dropna(), perc)
+    top_vals = rq[rq >= thresh]
+    robust_max = top_vals.mean() if len(top_vals)>0 else rq.max()
+
+    # —— optional debug plot —— 
+    """
+    plt.plot(times, speeds,       'r.', alpha=0.3, label='all')
+    plt.plot(times[mid_mask], cs_h,'ko', alpha=0.4, label='hampel')
+    plt.plot(times[mid_mask], cs_s,'b-', lw=2,    label='sav-gol')
+    plt.plot(times[mid_mask], rq,  'k--',         label=f'roll {perc}th')
+    plt.axhline(robust_max, color='g', ls='-', label=f'plateau avg: {robust_max:.1f}')
+    plt.legend(); plt.show()
+    """
+    # ————————————————
+
+    return float(robust_max)
+
+
 
 def detect_motion_events_seg(df,
                               gap_threshold: float = 1.5,
@@ -47,6 +145,10 @@ def detect_motion_events_seg(df,
         if duration >= min_duration and (n_pts / duration) >= min_rate:
             speeds = seg['kmh'].abs()
             avg_vel = seg['kmh'].mean()
+            
+            # Calculate robust maximum speed
+            robust_max = get_robust_max_speed(seg)
+            
             # Modify type assignment to include short pedestrians
             if speeds.mean() > 15.0:
                 event_type = 1  # vehicle
@@ -59,8 +161,9 @@ def detect_motion_events_seg(df,
                 'start_time': t0,
                 'end_time':   t1,
                 'duration':   duration,
+                'samples':    n_pts,     # Add number of samples
                 'avg_speed':  speeds.mean(),
-                'max_speed':  speeds.max(),
+                'max_speed':  robust_max,  # Use robust maximum
                 'direction':  int(np.sign(avg_vel)),
                 'type':       event_type
             })
@@ -116,6 +219,19 @@ def process_radar_file(fname: str, indir: str, show_plot: bool = True):
     n_pedestrians = len(events_df[events_df['type'] == 0])
     n_vehicles = len(events_df[events_df['type'] == 1])
     n_short_peds = len(events_df[events_df['type'] == -1])
+    
+    # Calculate samples per second for vehicles and pedestrians
+    vehicle_events = events_df[events_df['type'] == 1]
+    ped_events = events_df[events_df['type'] == 0]
+    
+    if not vehicle_events.empty:
+        vehicle_rate = vehicle_events['samples'].sum() / vehicle_events['duration'].sum()
+        print(f"Vehicle events average {vehicle_rate:.1f} samples/second")
+    
+    if not ped_events.empty:
+        ped_rate = ped_events['samples'].sum() / ped_events['duration'].sum()
+        print(f"Pedestrian events average {ped_rate:.1f} samples/second")
+    
     print(f"\nSummary:")
     print(f"Vehicles: {n_vehicles}")
     print(f"Pedestrians: {n_pedestrians}")
@@ -238,7 +354,8 @@ if __name__ == "__main__":
     # adjust paths as needed
     fname1 = '20250528_0000_DpCh1.csv'
     fname2 = '20250528_0000_DpCh2.csv'
-    indir = r"/home/jbeale/Documents/doppler"
+    # indir = r"/home/jbeale/Documents/doppler"
+    indir = r"C:\Users\beale\Documents\doppler"
     
     process_radar_file(fname1, indir, show_plot=False)
     process_radar_file(fname2, indir, show_plot=False)
