@@ -105,7 +105,8 @@ def classify_matches(df_ch1, df_ch2, matches):
     return matched_df, unmatched_ch1, unmatched_ch2
 
 def main():
-    directory = r"C:\Users\beale\Documents\doppler" 
+    #directory = r"C:\Users\beale\Documents\doppler" 
+    directory = r"/home/jbeale/Documents/doppler"
     ch1_file = "20250529_0000_DpCh1_summary.csv"
     ch2_file = "20250529_0000_DpCh2_summary.csv"
 
@@ -120,6 +121,13 @@ def main():
     matches = find_directional_matches(df_ch1, df_ch2)
     matched_df, unmatched_ch1, unmatched_ch2 = classify_matches(df_ch1, df_ch2, matches)
 
+    # Save matched events to CSV
+    outf = ch1_file[:8] + "_matched_events.csv"
+    outPath = os.path.join(directory, outf)
+    matched_df.to_csv(outPath, index=False)
+    print(f"Matched events saved to {outPath}")
+    
+    # Print results
     print("Matched Event Pairs with Speeds (km/h):\n", matched_df)
     print("\nUnmatched Events from Ch1:\n", 
           unmatched_ch1[['event_id', 'time', 'duration', 'direction', 'max_speed']])  # Changed
